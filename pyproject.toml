@@ -1,0 +1,19 @@
+[project]
+name = "nvno"
+version = "0.1.0"
+description = "A minimal terminal-native IDE built with Textual."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "textual[syntax]>=8.2.7",
+]
+
+[project.scripts]
+nvno = "nvno.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nvno"]
