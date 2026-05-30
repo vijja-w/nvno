@@ -7,7 +7,7 @@ It opens the current directory with a file tree, tabs, an editor, syntax highlig
 ## Install
 
 ```bash
-uv tool install git+https://github.com/username/nvno.git
+uv tool install git+https://github.com/vijja-w/nvno.git
 ```
 
 ## Use
