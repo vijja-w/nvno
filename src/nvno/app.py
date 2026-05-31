@@ -178,7 +178,11 @@ class NvnoApp(App[None]):
         policy = editor_file_policy(path)
         if policy.can_open:
             try:
-                buffer = Buffer(path=path, text=read_text_for_editor(path))
+                buffer = Buffer(
+                    path=path,
+                    text=read_text_for_editor(path),
+                    preview=is_markdown_path(path),
+                )
             except (OSError, UnsupportedEditorFileError) as exc:
                 buffer = Buffer(path=path, text="", open_error=f"File cannot be opened: {exc}")
         else:
@@ -230,12 +234,14 @@ class NvnoApp(App[None]):
             self.close_tab(self.active_path)
 
     def action_focus_or_toggle_sidebar(self) -> None:
+        sidebar = self.query_one("#sidebar", Vertical)
         tree = self.query_one("#project-tree", ProjectTree)
-        if not tree.display:
+        if not sidebar.display:
+            sidebar.display = True
             tree.display = True
             tree.focus()
         elif tree.has_focus:
-            tree.display = False
+            sidebar.display = False
             self.action_focus_editor()
         else:
             tree.focus()

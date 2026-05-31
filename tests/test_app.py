@@ -68,7 +68,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(app.active_path, Path("README.md").resolve())
             self.assertEqual([path.name for path in app.open_tabs], ["README.md"])
-            self.assertTrue(app.query_one("#editor", TextArea).display)
+            self.assertFalse(app.query_one("#editor", TextArea).display)
+            self.assertTrue(app.query_one("#markdown-preview", Markdown).display)
 
     async def test_close_last_tab_clears_editor(self) -> None:
         app = NvnoApp()
@@ -269,7 +270,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
             toggle = app.query_one(MarkdownPreviewToggle)
             self.assertTrue(toggle.display)
-            self.assertEqual(str(toggle.content), "Preview")
+            self.assertEqual(str(toggle.content), "Edit")
 
             app.open_file(Path("pyproject.toml"))
             await pilot.pause()
@@ -290,9 +291,6 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             editor = app.query_one("#editor", TextArea)
             preview = app.query_one("#markdown-preview", Markdown)
 
-            self.assertTrue(await pilot.click(toggle))
-            await pilot.pause()
-
             self.assertFalse(editor.display)
             self.assertTrue(preview.display)
             self.assertTrue(preview.has_focus)
@@ -308,6 +306,15 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.buffers[Path("README.md").resolve()].preview)
             self.assertEqual(str(toggle.content), "Preview")
 
+            self.assertTrue(await pilot.click(toggle))
+            await pilot.pause()
+
+            self.assertFalse(editor.display)
+            self.assertTrue(preview.display)
+            self.assertTrue(preview.has_focus)
+            self.assertTrue(app.buffers[Path("README.md").resolve()].preview)
+            self.assertEqual(str(toggle.content), "Edit")
+
     async def test_markdown_preview_can_receive_scroll_focus(self) -> None:
         markdown_path = Path("scroll-preview.md")
         markdown_path.write_text(
@@ -320,9 +327,6 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 20)) as pilot:
                 await pilot.pause()
                 app.open_file(markdown_path)
-                await pilot.pause()
-
-                self.assertTrue(await pilot.click(MarkdownPreviewToggle))
                 await pilot.pause()
 
                 preview = app.query_one("#markdown-preview", Markdown)
@@ -425,31 +429,38 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             tree = app.query_one(ProjectTree)
+            sidebar = app.query_one("#sidebar", Vertical)
             editor = app.query_one("#editor", TextArea)
 
+            self.assertTrue(sidebar.display)
             self.assertTrue(tree.display)
-            app.open_file(Path("README.md"))
+            app.open_file(Path("pyproject.toml"))
             await pilot.pause()
             editor.focus()
 
             app.action_focus_or_toggle_sidebar()
             await pilot.pause()
+            self.assertTrue(sidebar.display)
             self.assertTrue(tree.display)
             self.assertTrue(tree.has_focus)
 
             app.action_focus_or_toggle_sidebar()
             await pilot.pause()
-            self.assertFalse(tree.display)
+            self.assertFalse(sidebar.display)
+            self.assertEqual(sidebar.region.width, 0)
             self.assertTrue(editor.has_focus)
 
             app.action_focus_or_toggle_sidebar()
             await pilot.pause()
+            self.assertTrue(sidebar.display)
+            self.assertGreater(sidebar.region.width, 0)
             self.assertTrue(tree.display)
             self.assertTrue(tree.has_focus)
 
             app.action_focus_editor()
             await pilot.pause()
             self.assertTrue(editor.has_focus)
+            self.assertTrue(sidebar.display)
             self.assertTrue(tree.display)
 
             tree.action_collapse_or_parent()
@@ -463,13 +474,15 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             tree = app.query_one(ProjectTree)
+            sidebar = app.query_one("#sidebar", Vertical)
             right = app.query_one("#right", Vertical)
 
             tree.focus()
             app.action_focus_or_toggle_sidebar()
             await pilot.pause()
 
-            self.assertFalse(tree.display)
+            self.assertFalse(sidebar.display)
+            self.assertEqual(sidebar.region.width, 0)
             self.assertTrue(right.has_focus)
 
 
