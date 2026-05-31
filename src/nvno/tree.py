@@ -4,9 +4,23 @@ from pathlib import Path
 
 from textual.binding import Binding
 from textual import events
+from textual.message import Message
 from textual.widgets import Tree
+from textual.widgets import Static
 
 from .fs import sorted_children
+
+
+class DirectoryRefreshButton(Static):
+    class Pressed(Message):
+        pass
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(" Refresh ", **kwargs)
+
+    async def _on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(self.Pressed())
 
 
 class ProjectTree(Tree[Path]):
@@ -31,6 +45,12 @@ class ProjectTree(Tree[Path]):
         path = node.data
         if isinstance(path, Path) and path.is_dir() and not node.children:
             self._populate(node)
+
+    def refresh_directory(self) -> None:
+        self.root.remove_children()
+        self.root.expand()
+        self._populate(self.root)
+        self.refresh()
 
     async def _on_click(self, event: events.Click) -> None:
         event.stop()

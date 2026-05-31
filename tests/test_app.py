@@ -11,7 +11,7 @@ from nvno.app import NvnoApp
 from nvno.file_policy import MAX_EDITOR_FILE_SIZE_BYTES
 from nvno.tabs import CloseTab, FileTab, TabBar
 from nvno.theme import EDITOR_THEME, language_for_path
-from nvno.tree import ProjectTree
+from nvno.tree import DirectoryRefreshButton, ProjectTree
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
@@ -178,11 +178,97 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
+            tree = app.query_one(ProjectTree)
+            target_line = next(
+                line
+                for line in range(tree.last_line + 1)
+                if (node := tree.get_node_at_line(line)) is not None
+                and node.data == Path("pyproject.toml").resolve()
+            )
 
-            self.assertTrue(await pilot.click(ProjectTree, offset=(4, 5)))
+            self.assertTrue(await pilot.click(ProjectTree, offset=(4, target_line)))
             await pilot.pause()
 
             self.assertEqual(app.active_path, Path("pyproject.toml").resolve())
+
+    async def test_sidebar_refresh_button_reloads_directory(self) -> None:
+        added_path = Path("refresh-added.txt")
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                tree = app.query_one(ProjectTree)
+                self.assertNotIn(added_path.resolve(), [node.data for node in tree.root.children])
+
+                added_path.write_text("new", encoding="utf-8")
+                self.assertTrue(await pilot.click(DirectoryRefreshButton))
+                await pilot.pause()
+
+                self.assertIn(added_path.resolve(), [node.data for node in tree.root.children])
+        finally:
+            added_path.unlink(missing_ok=True)
+
+    async def test_path_status_shows_active_file_path(self) -> None:
+        app = NvnoApp()
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.open_file(Path("src/nvno/app.py"))
+            await pilot.pause()
+
+            status = app.query_one("#path-status", Static)
+            self.assertEqual(str(status.content), "src/nvno/app.py")
+
+    def test_path_status_truncates_from_left(self) -> None:
+        app = NvnoApp()
+
+        path = Path("a") / "very" / "long" / "folder" / "name" / "file.py"
+
+        self.assertEqual(app._format_status_path(path, 16), ".../name/file.py")
+
+    async def test_deleted_file_closes_open_tab(self) -> None:
+        deleted_path = Path("delete-me.txt")
+        deleted_path.write_text("bye", encoding="utf-8")
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.open_file(deleted_path)
+                await pilot.pause()
+
+                deleted_path.unlink()
+                app._reconcile_open_files()
+                await pilot.pause()
+
+                self.assertEqual(app.open_tabs, [])
+                self.assertIsNone(app.active_path)
+        finally:
+            deleted_path.unlink(missing_ok=True)
+
+    async def test_moved_file_updates_open_tab_path_status(self) -> None:
+        old_path = Path("move-me.txt")
+        new_path = Path("moved-here.txt")
+        old_path.write_text("hello", encoding="utf-8")
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.open_file(old_path)
+                await pilot.pause()
+
+                old_path.rename(new_path)
+                app._reconcile_open_files()
+                await pilot.pause()
+
+                self.assertEqual(app.open_tabs, [new_path.resolve()])
+                self.assertEqual(app.active_path, new_path.resolve())
+                self.assertEqual(str(app.query_one("#path-status", Static).content), "moved-here.txt")
+        finally:
+            old_path.unlink(missing_ok=True)
+            new_path.unlink(missing_ok=True)
 
     async def test_editor_theme_and_language_follow_active_file(self) -> None:
         html_path = Path("sample.html")

@@ -71,9 +71,15 @@ Screen {{
     background: {PALETTE["bg"]};
 }}
 
-#project-tree {{
+#sidebar {{
     width: 32;
     height: 100%;
+    background: {PALETTE["surface"]};
+}}
+
+#project-tree {{
+    width: 100%;
+    height: 1fr;
     border: none;
     background: {PALETTE["surface"]};
     color: {PALETTE["muted"]};
@@ -82,6 +88,29 @@ Screen {{
 #project-tree:focus {{
     background: {PALETTE["surface_lift"]};
     color: {PALETTE["text"]};
+}}
+
+#sidebar-footer {{
+    height: 1;
+    background: {PALETTE["bg"]};
+}}
+
+#refresh-directory-button {{
+    width: 9;
+    height: 1;
+    color: {PALETTE["bg"]};
+    background: {PALETTE["accent"]};
+    text-style: bold;
+}}
+
+#refresh-directory-button:hover {{
+    background: {PALETTE["accent_2"]};
+}}
+
+#sidebar-footer-spacer {{
+    width: 1fr;
+    height: 1;
+    background: {PALETTE["bg"]};
 }}
 
 #right {{
@@ -102,6 +131,14 @@ Screen {{
     padding: 2 4;
     background: {PALETTE["editor_bg"]};
     color: {PALETTE["muted"]};
+}}
+
+#path-status {{
+    height: 1;
+    padding: 0 1;
+    background: {PALETTE["bg"]};
+    color: {PALETTE["muted"]};
+    text-overflow: ellipsis;
 }}
 """
 

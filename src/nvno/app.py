@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -11,10 +12,12 @@ from textual.widgets import Static, TextArea, Tree
 from .autosave import atomic_write_text
 from .editor import Buffer
 from .file_policy import UnsupportedEditorFileError, editor_file_policy
-from .fs import read_text_for_editor
+from .fs import is_ignored, read_text_for_editor
 from .tabs import TabBar
 from .theme import APP_CSS, EDITOR_THEME, language_for_path
-from .tree import ProjectTree
+from .tree import DirectoryRefreshButton, ProjectTree
+
+FileIdentity = tuple[int, int]
 
 
 class NvnoApp(App[None]):
@@ -40,12 +43,18 @@ class NvnoApp(App[None]):
         self.buffers: dict[Path, Buffer] = {}
         self.open_tabs: list[Path] = []
         self.active_path: Path | None = None
+        self.file_identities: dict[Path, FileIdentity | None] = {}
         self.loading_editor_text = False
         self.autosave_timer: Timer | None = None
+        self.file_watch_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
-            yield ProjectTree(self.project_root, id="project-tree")
+            with Vertical(id="sidebar"):
+                yield ProjectTree(self.project_root, id="project-tree")
+                with Horizontal(id="sidebar-footer"):
+                    yield DirectoryRefreshButton(id="refresh-directory-button")
+                    yield Static("", id="sidebar-footer-spacer")
             with Vertical(id="right"):
                 yield TabBar(id="tab-bar")
                 yield TextArea.code_editor(
@@ -55,12 +64,14 @@ class NvnoApp(App[None]):
                     theme=EDITOR_THEME,
                 )
                 yield Static("", id="blocked-file-pane")
+                yield Static("", id="path-status")
 
     def on_mount(self) -> None:
         self.query_one("#editor", TextArea).display = False
         self.query_one("#blocked-file-pane", Static).display = False
         self.query_one("#right", Vertical).can_focus = True
         self._refresh_tabs()
+        self.file_watch_timer = self.set_interval(0.75, self._reconcile_open_files)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[Path]) -> None:
         path = event.node.data
@@ -76,6 +87,10 @@ class NvnoApp(App[None]):
     def on_tree_node_expanded(self, event: Tree.NodeExpanded[Path]) -> None:
         if isinstance(event.control, ProjectTree):
             event.control.ensure_loaded(event.node)
+
+    def on_directory_refresh_button_pressed(self, event: DirectoryRefreshButton.Pressed) -> None:
+        event.stop()
+        self._refresh_directory()
 
     def on_tab_bar_tab_selected(self, event: TabBar.TabSelected) -> None:
         self.switch_to(event.path)
@@ -113,6 +128,7 @@ class NvnoApp(App[None]):
                 open_error=policy.message or "File cannot be opened.",
             )
         self.buffers[path] = buffer
+        self.file_identities[path] = self._file_identity(path)
         self.open_tabs.append(path)
         self.switch_to(path)
 
@@ -182,6 +198,7 @@ class NvnoApp(App[None]):
         close_index = self.open_tabs.index(path)
         self.open_tabs.remove(path)
         self.buffers.pop(path, None)
+        self.file_identities.pop(path, None)
 
         if not was_active:
             self._refresh_tabs()
@@ -252,6 +269,93 @@ class NvnoApp(App[None]):
             self.active_path,
             self.buffers,
         )
+        self._refresh_path_status()
+
+    def _refresh_directory(self) -> None:
+        self.query_one("#project-tree", ProjectTree).refresh_directory()
+        self._reconcile_open_files()
+
+    def _refresh_path_status(self) -> None:
+        status = self.query_one("#path-status", Static)
+        if self.active_path is None:
+            status.update("")
+            return
+
+        width = max(status.size.width - 2, 0) or 80
+        status.update(self._format_status_path(self.active_path, width))
+
+    def _format_status_path(self, path: Path, max_width: int) -> str:
+        try:
+            display_path = str(path.resolve().relative_to(self.project_root))
+        except ValueError:
+            display_path = str(path.resolve())
+
+        if len(display_path) <= max_width:
+            return display_path
+        if max_width <= 3:
+            return display_path[-max_width:]
+        return "..." + display_path[-(max_width - 3) :]
+
+    def _reconcile_open_files(self) -> None:
+        if not self.open_tabs:
+            return
+
+        identity_locations: dict[FileIdentity, Path] | None = None
+        changed = False
+        for path in list(self.open_tabs):
+            if path.exists():
+                self.file_identities[path] = self._file_identity(path)
+                continue
+
+            identity = self.file_identities.get(path)
+            new_path: Path | None = None
+            if identity is not None:
+                if identity_locations is None:
+                    identity_locations = self._project_file_identities()
+                new_path = identity_locations.get(identity)
+
+            if new_path is not None and new_path not in self.buffers:
+                self._retarget_open_file(path, new_path)
+            else:
+                self._close_missing_tab(path)
+            changed = True
+
+        if changed:
+            self.query_one("#project-tree", ProjectTree).refresh_directory()
+            self._refresh_tabs()
+
+    def _close_missing_tab(self, path: Path) -> None:
+        was_active = path == self.active_path
+        close_index = self.open_tabs.index(path)
+        self.open_tabs.remove(path)
+        self.buffers.pop(path, None)
+        self.file_identities.pop(path, None)
+
+        if not was_active:
+            return
+
+        if self.open_tabs:
+            next_index = min(close_index, len(self.open_tabs) - 1)
+            self.active_path = None
+            self.switch_to(self.open_tabs[next_index])
+        else:
+            self.active_path = None
+            self._clear_editor()
+
+    def _retarget_open_file(self, old_path: Path, new_path: Path) -> None:
+        new_path = new_path.resolve()
+        buffer = self.buffers.pop(old_path)
+        buffer.path = new_path
+        self.buffers[new_path] = buffer
+
+        tab_index = self.open_tabs.index(old_path)
+        self.open_tabs[tab_index] = new_path
+
+        identity = self.file_identities.pop(old_path, None)
+        self.file_identities[new_path] = identity or self._file_identity(new_path)
+
+        if self.active_path == old_path:
+            self.active_path = new_path
 
     def _schedule_autosave(self) -> None:
         if self.autosave_timer is not None:
@@ -280,4 +384,26 @@ class NvnoApp(App[None]):
         else:
             buffer.dirty = False
             buffer.save_error = None
+            self.file_identities[buffer.path] = self._file_identity(buffer.path)
             return True
+
+    def _file_identity(self, path: Path) -> FileIdentity | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_dev, stat.st_ino)
+
+    def _project_file_identities(self) -> dict[FileIdentity, Path]:
+        identities: dict[FileIdentity, Path] = {}
+        for root, dir_names, file_names in os.walk(self.project_root):
+            root_path = Path(root)
+            dir_names[:] = [
+                name for name in dir_names if not is_ignored(root_path / name)
+            ]
+            for file_name in file_names:
+                path = root_path / file_name
+                identity = self._file_identity(path)
+                if identity is not None:
+                    identities[identity] = path.resolve()
+        return identities
