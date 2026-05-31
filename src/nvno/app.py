@@ -6,18 +6,43 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import MouseDown
+from textual.message import Message
+from textual.css.query import NoMatches
 from textual.timer import Timer
-from textual.widgets import Static, TextArea, Tree
+from textual.widgets import Markdown, Static, TextArea, Tree
 
 from .autosave import atomic_write_text
 from .editor import Buffer
 from .file_policy import UnsupportedEditorFileError, editor_file_policy
 from .fs import is_ignored, read_text_for_editor
 from .tabs import TabBar
-from .theme import APP_CSS, EDITOR_THEME, language_for_path
+from .theme import APP_CSS, EDITOR_THEME, is_markdown_path, language_for_path
 from .tree import DirectoryRefreshButton, ProjectTree
 
 FileIdentity = tuple[int, int]
+
+
+class MarkdownPreviewToggle(Static):
+    class Pressed(Message):
+        pass
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__("Preview", **kwargs)
+
+    async def _on_mouse_down(self, event: MouseDown) -> None:
+        if event.button != 1:
+            return
+        event.stop()
+        self.post_message(self.Pressed())
+
+    def set_previewing(self, previewing: bool) -> None:
+        self.update("Edit" if previewing else "Preview")
+        self.set_class(previewing, "active")
+
+
+class MarkdownPreview(Markdown):
+    can_focus = True
 
 
 class NvnoApp(App[None]):
@@ -63,12 +88,17 @@ class NvnoApp(App[None]):
                     soft_wrap=True,
                     theme=EDITOR_THEME,
                 )
+                yield MarkdownPreview("", id="markdown-preview", open_links=False)
                 yield Static("", id="blocked-file-pane")
-                yield Static("", id="path-status")
+                with Horizontal(id="file-footer"):
+                    yield Static("", id="path-status")
+                    yield MarkdownPreviewToggle(id="markdown-preview-toggle")
 
     def on_mount(self) -> None:
         self.query_one("#editor", TextArea).display = False
+        self.query_one("#markdown-preview", Markdown).display = False
         self.query_one("#blocked-file-pane", Static).display = False
+        self.query_one("#markdown-preview-toggle", MarkdownPreviewToggle).display = False
         self.query_one("#right", Vertical).can_focus = True
         self._refresh_tabs()
         self.file_watch_timer = self.set_interval(0.75, self._reconcile_open_files)
@@ -97,6 +127,29 @@ class NvnoApp(App[None]):
 
     def on_tab_bar_tab_closed(self, event: TabBar.TabClosed) -> None:
         self.close_tab(event.path)
+
+    def on_markdown_preview_toggle_pressed(
+        self, event: MarkdownPreviewToggle.Pressed
+    ) -> None:
+        event.stop()
+        if self.active_path is None or self.active_path not in self.buffers:
+            return
+        if not is_markdown_path(self.active_path):
+            return
+
+        buffer = self.buffers[self.active_path]
+        if not buffer.editable:
+            return
+        if not buffer.preview:
+            self._sync_active_editor_to_buffer()
+
+        buffer.preview = not buffer.preview
+        if buffer.preview:
+            self._load_markdown_preview(buffer.text)
+        else:
+            self._load_editor_text(self.active_path, buffer.text)
+            self.action_focus_editor()
+        self._refresh_path_status()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if self.loading_editor_text or self.active_path is None:
@@ -141,7 +194,11 @@ class NvnoApp(App[None]):
         self.active_path = path
         buffer = self.buffers[path]
         if buffer.editable:
-            self._load_editor_text(path, buffer.text)
+            if buffer.preview and is_markdown_path(path):
+                self._load_markdown_preview(buffer.text)
+            else:
+                buffer.preview = False
+                self._load_editor_text(path, buffer.text)
         else:
             self._load_blocked_file(path, buffer.open_error or "File cannot be opened.")
         self._refresh_tabs()
@@ -178,8 +235,11 @@ class NvnoApp(App[None]):
 
     def action_focus_editor(self) -> None:
         editor = self.query_one("#editor", TextArea)
+        preview = self.query_one("#markdown-preview", MarkdownPreview)
         if editor.display:
             editor.focus()
+        elif preview.display:
+            preview.focus()
         else:
             self.query_one("#right", Vertical).focus()
 
@@ -215,8 +275,10 @@ class NvnoApp(App[None]):
 
     def _load_editor_text(self, path: Path, text: str) -> None:
         editor = self.query_one("#editor", TextArea)
+        preview = self.query_one("#markdown-preview", Markdown)
         blocked_pane = self.query_one("#blocked-file-pane", Static)
         editor.display = True
+        preview.display = False
         blocked_pane.display = False
         self.loading_editor_text = True
         try:
@@ -226,14 +288,30 @@ class NvnoApp(App[None]):
         finally:
             self.loading_editor_text = False
 
+    def _load_markdown_preview(self, text: str) -> None:
+        editor = self.query_one("#editor", TextArea)
+        preview = self.query_one("#markdown-preview", MarkdownPreview)
+        blocked_pane = self.query_one("#blocked-file-pane", Static)
+        self.loading_editor_text = True
+        try:
+            editor.display = False
+            blocked_pane.display = False
+            preview.display = True
+            preview.update(text)
+            preview.focus()
+        finally:
+            self.loading_editor_text = False
+
     def _load_blocked_file(self, path: Path, message: str) -> None:
         editor = self.query_one("#editor", TextArea)
+        preview = self.query_one("#markdown-preview", Markdown)
         blocked_pane = self.query_one("#blocked-file-pane", Static)
         self.loading_editor_text = True
         try:
             editor.language = None
             editor.load_text("")
             editor.display = False
+            preview.display = False
             blocked_pane.update(f"{path.name}\n\n{message}")
             blocked_pane.display = True
         finally:
@@ -241,12 +319,15 @@ class NvnoApp(App[None]):
 
     def _clear_editor(self) -> None:
         editor = self.query_one("#editor", TextArea)
+        preview = self.query_one("#markdown-preview", Markdown)
         blocked_pane = self.query_one("#blocked-file-pane", Static)
         self.loading_editor_text = True
         try:
             editor.language = None
             editor.load_text("")
             editor.display = False
+            preview.update("")
+            preview.display = False
             blocked_pane.update("")
             blocked_pane.display = False
         finally:
@@ -258,13 +339,23 @@ class NvnoApp(App[None]):
         buffer = self.buffers[self.active_path]
         if not buffer.editable:
             return
-        editor = self.query_one("#editor", TextArea)
+        try:
+            editor = self.query_one("#editor", TextArea)
+        except NoMatches:
+            return
+        if not editor.display:
+            return
         if buffer.text != editor.text:
             buffer.text = editor.text
             buffer.dirty = True
 
     def _refresh_tabs(self) -> None:
-        self.query_one("#tab-bar", TabBar).update_tabs(
+        try:
+            tab_bar = self.query_one("#tab-bar", TabBar)
+        except NoMatches:
+            return
+
+        tab_bar.update_tabs(
             self.open_tabs,
             self.active_path,
             self.buffers,
@@ -277,9 +368,18 @@ class NvnoApp(App[None]):
 
     def _refresh_path_status(self) -> None:
         status = self.query_one("#path-status", Static)
+        toggle = self.query_one("#markdown-preview-toggle", MarkdownPreviewToggle)
         if self.active_path is None:
             status.update("")
+            toggle.display = False
             return
+
+        buffer = self.buffers.get(self.active_path)
+        can_preview = bool(
+            buffer and buffer.editable and is_markdown_path(self.active_path)
+        )
+        toggle.display = can_preview
+        toggle.set_previewing(bool(can_preview and buffer and buffer.preview))
 
         width = max(status.size.width - 2, 0) or 80
         status.update(self._format_status_path(self.active_path, width))

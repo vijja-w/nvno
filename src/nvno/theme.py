@@ -29,6 +29,7 @@ LANGUAGE_BY_SUFFIX = {
     ".json": "json",
     ".jsx": "javascript",
     ".md": "markdown",
+    ".markdown": "markdown",
     ".py": "python",
     ".regex": "regex",
     ".rs": "rust",
@@ -42,6 +43,8 @@ LANGUAGE_BY_SUFFIX = {
     ".yml": "yaml",
     ".zsh": "bash",
 }
+
+MARKDOWN_SUFFIXES = {".md", ".markdown"}
 
 LANGUAGE_BY_NAME = {
     "Dockerfile": "bash",
@@ -57,6 +60,10 @@ def language_for_path(
     if available_languages is not None and language not in available_languages:
         return None
     return language
+
+
+def is_markdown_path(path: Path) -> bool:
+    return path.suffix.lower() in MARKDOWN_SUFFIXES
 
 
 APP_CSS = f"""
@@ -126,6 +133,14 @@ Screen {{
     color: {PALETTE["text"]};
 }}
 
+#markdown-preview {{
+    height: 1fr;
+    padding: 1 2;
+    overflow-y: auto;
+    background: {PALETTE["editor_bg"]};
+    color: {PALETTE["text"]};
+}}
+
 #blocked-file-pane {{
     height: 1fr;
     padding: 2 4;
@@ -133,12 +148,38 @@ Screen {{
     color: {PALETTE["muted"]};
 }}
 
+#file-footer {{
+    height: 1;
+    background: {PALETTE["bg"]};
+}}
+
 #path-status {{
+    width: 1fr;
     height: 1;
     padding: 0 1;
     background: {PALETTE["bg"]};
     color: {PALETTE["muted"]};
     text-overflow: ellipsis;
+}}
+
+MarkdownPreviewToggle {{
+    width: 9;
+    height: 1;
+    padding: 0 1;
+    background: {PALETTE["surface_lift"]};
+    color: {PALETTE["muted"]};
+    text-align: center;
+}}
+
+MarkdownPreviewToggle:hover {{
+    color: {PALETTE["bg"]};
+    background: {PALETTE["accent_2"]};
+}}
+
+MarkdownPreviewToggle.active {{
+    color: {PALETTE["bg"]};
+    background: {PALETTE["accent"]};
+    text-style: bold;
 }}
 """
 

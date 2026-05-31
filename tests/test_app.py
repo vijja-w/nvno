@@ -5,9 +5,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from textual.containers import Vertical
-from textual.widgets import Static, TextArea
+from textual.widgets import Markdown, Static, TextArea
 
-from nvno.app import NvnoApp
+from nvno.app import MarkdownPreviewToggle, NvnoApp
 from nvno.file_policy import MAX_EDITOR_FILE_SIZE_BYTES
 from nvno.tabs import CloseTab, FileTab, TabBar
 from nvno.theme import EDITOR_THEME, language_for_path
@@ -219,6 +219,85 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
             status = app.query_one("#path-status", Static)
             self.assertEqual(str(status.content), "src/nvno/app.py")
+
+    async def test_markdown_preview_toggle_shows_only_for_markdown(self) -> None:
+        app = NvnoApp()
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.open_file(Path("README.md"))
+            await pilot.pause()
+
+            toggle = app.query_one(MarkdownPreviewToggle)
+            self.assertTrue(toggle.display)
+            self.assertEqual(str(toggle.content), "Preview")
+
+            app.open_file(Path("pyproject.toml"))
+            await pilot.pause()
+
+            self.assertFalse(toggle.display)
+
+    async def test_markdown_preview_toggle_switches_between_preview_and_editor(
+        self,
+    ) -> None:
+        app = NvnoApp()
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.open_file(Path("README.md"))
+            await pilot.pause()
+
+            toggle = app.query_one(MarkdownPreviewToggle)
+            editor = app.query_one("#editor", TextArea)
+            preview = app.query_one("#markdown-preview", Markdown)
+
+            self.assertTrue(await pilot.click(toggle))
+            await pilot.pause()
+
+            self.assertFalse(editor.display)
+            self.assertTrue(preview.display)
+            self.assertTrue(preview.has_focus)
+            self.assertTrue(app.buffers[Path("README.md").resolve()].preview)
+            self.assertEqual(str(toggle.content), "Edit")
+
+            self.assertTrue(await pilot.click(toggle))
+            await pilot.pause()
+
+            self.assertTrue(editor.display)
+            self.assertFalse(preview.display)
+            self.assertTrue(editor.has_focus)
+            self.assertFalse(app.buffers[Path("README.md").resolve()].preview)
+            self.assertEqual(str(toggle.content), "Preview")
+
+    async def test_markdown_preview_can_receive_scroll_focus(self) -> None:
+        markdown_path = Path("scroll-preview.md")
+        markdown_path.write_text(
+            "\n".join(f"## Section {index}\n\nSome preview text." for index in range(80)),
+            encoding="utf-8",
+        )
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(80, 20)) as pilot:
+                await pilot.pause()
+                app.open_file(markdown_path)
+                await pilot.pause()
+
+                self.assertTrue(await pilot.click(MarkdownPreviewToggle))
+                await pilot.pause()
+
+                preview = app.query_one("#markdown-preview", Markdown)
+                self.assertTrue(preview.can_focus)
+                self.assertTrue(preview.has_focus)
+                self.assertTrue(preview.show_vertical_scrollbar)
+                self.assertGreater(preview.max_scroll_y, 0)
+
+                preview.scroll_down(animate=False, force=True)
+                await pilot.pause()
+
+                self.assertGreater(preview.scroll_y, 0)
+        finally:
+            markdown_path.unlink(missing_ok=True)
 
     def test_path_status_truncates_from_left(self) -> None:
         app = NvnoApp()

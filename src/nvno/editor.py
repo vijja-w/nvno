@@ -11,6 +11,7 @@ class Buffer:
     dirty: bool = False
     save_error: str | None = None
     open_error: str | None = None
+    preview: bool = False
 
     @property
     def editable(self) -> bool:
