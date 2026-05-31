@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .file_policy import ensure_editor_file_supported
+
 IGNORED_DIRS = {
     ".git",
     ".venv",
@@ -28,4 +30,5 @@ def sorted_children(directory: Path) -> list[Path]:
 
 
 def read_text_for_editor(path: Path) -> str:
+    ensure_editor_file_supported(path)
     return path.read_text(encoding="utf-8", errors="replace")

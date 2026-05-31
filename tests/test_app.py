@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from textual.containers import Vertical
-from textual.widgets import TextArea
+from textual.widgets import Static, TextArea
 
 from nvno.app import NvnoApp
+from nvno.file_policy import MAX_EDITOR_FILE_SIZE_BYTES
 from nvno.tabs import CloseTab, FileTab, TabBar
 from nvno.theme import EDITOR_THEME, language_for_path
 from nvno.tree import ProjectTree
@@ -43,6 +45,71 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(app.active_path)
             self.assertEqual(app.open_tabs, [])
             self.assertFalse(app.query_one("#editor", TextArea).display)
+            self.assertFalse(app.query_one("#blocked-file-pane", Static).display)
+
+    async def test_unsupported_file_opens_blocked_pane(self) -> None:
+        pdf_path = Path("sample.pdf")
+        pdf_path.write_bytes(b"%PDF")
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.open_file(pdf_path)
+                await pilot.pause()
+
+                editor = app.query_one("#editor", TextArea)
+                blocked_pane = app.query_one("#blocked-file-pane", Static)
+                self.assertEqual(app.active_path, pdf_path.resolve())
+                self.assertFalse(editor.display)
+                self.assertTrue(blocked_pane.display)
+                self.assertIn("not supported", str(blocked_pane.content))
+                self.assertFalse(app.buffers[pdf_path.resolve()].editable)
+        finally:
+            pdf_path.unlink(missing_ok=True)
+
+    async def test_large_file_opens_blocked_pane(self) -> None:
+        large_path = Path("large.txt")
+        large_path.write_bytes(b"x" * (MAX_EDITOR_FILE_SIZE_BYTES + 1))
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.open_file(large_path)
+                await pilot.pause()
+
+                editor = app.query_one("#editor", TextArea)
+                blocked_pane = app.query_one("#blocked-file-pane", Static)
+                self.assertEqual(app.active_path, large_path.resolve())
+                self.assertFalse(editor.display)
+                self.assertTrue(blocked_pane.display)
+                self.assertIn("too large", str(blocked_pane.content))
+                self.assertFalse(app.buffers[large_path.resolve()].editable)
+        finally:
+            large_path.unlink(missing_ok=True)
+
+    async def test_unreadable_file_opens_blocked_pane(self) -> None:
+        text_path = Path("unreadable.txt")
+        text_path.write_text("looks fine until read", encoding="utf-8")
+        app = NvnoApp()
+
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
+                    app.open_file(text_path)
+                await pilot.pause()
+
+                editor = app.query_one("#editor", TextArea)
+                blocked_pane = app.query_one("#blocked-file-pane", Static)
+                self.assertEqual(app.active_path, text_path.resolve())
+                self.assertFalse(editor.display)
+                self.assertTrue(blocked_pane.display)
+                self.assertIn("cannot be opened", str(blocked_pane.content))
+                self.assertFalse(app.buffers[text_path.resolve()].editable)
+        finally:
+            text_path.unlink(missing_ok=True)
 
     async def test_tab_close_button_click_closes_tab(self) -> None:
         app = NvnoApp()

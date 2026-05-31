@@ -96,6 +96,13 @@ Screen {{
     background: {PALETTE["editor_bg"]};
     color: {PALETTE["text"]};
 }}
+
+#blocked-file-pane {{
+    height: 1fr;
+    padding: 2 4;
+    background: {PALETTE["editor_bg"]};
+    color: {PALETTE["muted"]};
+}}
 """
 
 TAB_CSS = f"""

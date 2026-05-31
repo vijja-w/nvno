@@ -6,10 +6,11 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.timer import Timer
-from textual.widgets import TextArea, Tree
+from textual.widgets import Static, TextArea, Tree
 
 from .autosave import atomic_write_text
 from .editor import Buffer
+from .file_policy import UnsupportedEditorFileError, editor_file_policy
 from .fs import read_text_for_editor
 from .tabs import TabBar
 from .theme import APP_CSS, EDITOR_THEME, language_for_path
@@ -53,9 +54,11 @@ class NvnoApp(App[None]):
                     soft_wrap=True,
                     theme=EDITOR_THEME,
                 )
+                yield Static("", id="blocked-file-pane")
 
     def on_mount(self) -> None:
         self.query_one("#editor", TextArea).display = False
+        self.query_one("#blocked-file-pane", Static).display = False
         self.query_one("#right", Vertical).can_focus = True
         self._refresh_tabs()
 
@@ -83,6 +86,8 @@ class NvnoApp(App[None]):
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if self.loading_editor_text or self.active_path is None:
             return
+        if not self.buffers[self.active_path].editable:
+            return
 
         buffer = self.buffers[self.active_path]
         buffer.text = event.text_area.text
@@ -95,7 +100,19 @@ class NvnoApp(App[None]):
             self.switch_to(path)
             return
 
-        self.buffers[path] = Buffer(path=path, text=read_text_for_editor(path))
+        policy = editor_file_policy(path)
+        if policy.can_open:
+            try:
+                buffer = Buffer(path=path, text=read_text_for_editor(path))
+            except (OSError, UnsupportedEditorFileError) as exc:
+                buffer = Buffer(path=path, text="", open_error=f"File cannot be opened: {exc}")
+        else:
+            buffer = Buffer(
+                path=path,
+                text="",
+                open_error=policy.message or "File cannot be opened.",
+            )
+        self.buffers[path] = buffer
         self.open_tabs.append(path)
         self.switch_to(path)
 
@@ -106,9 +123,13 @@ class NvnoApp(App[None]):
 
         self._sync_active_editor_to_buffer()
         self.active_path = path
-        self._load_editor_text(path, self.buffers[path].text)
+        buffer = self.buffers[path]
+        if buffer.editable:
+            self._load_editor_text(path, buffer.text)
+        else:
+            self._load_blocked_file(path, buffer.open_error or "File cannot be opened.")
         self._refresh_tabs()
-        self.query_one("#editor", TextArea).focus()
+        self.action_focus_editor()
 
     def action_save_now(self) -> None:
         self._sync_active_editor_to_buffer()
@@ -177,7 +198,9 @@ class NvnoApp(App[None]):
 
     def _load_editor_text(self, path: Path, text: str) -> None:
         editor = self.query_one("#editor", TextArea)
+        blocked_pane = self.query_one("#blocked-file-pane", Static)
         editor.display = True
+        blocked_pane.display = False
         self.loading_editor_text = True
         try:
             editor.language = language_for_path(path, editor.available_languages)
@@ -186,21 +209,39 @@ class NvnoApp(App[None]):
         finally:
             self.loading_editor_text = False
 
-    def _clear_editor(self) -> None:
+    def _load_blocked_file(self, path: Path, message: str) -> None:
         editor = self.query_one("#editor", TextArea)
+        blocked_pane = self.query_one("#blocked-file-pane", Static)
         self.loading_editor_text = True
         try:
             editor.language = None
             editor.load_text("")
             editor.display = False
+            blocked_pane.update(f"{path.name}\n\n{message}")
+            blocked_pane.display = True
+        finally:
+            self.loading_editor_text = False
+
+    def _clear_editor(self) -> None:
+        editor = self.query_one("#editor", TextArea)
+        blocked_pane = self.query_one("#blocked-file-pane", Static)
+        self.loading_editor_text = True
+        try:
+            editor.language = None
+            editor.load_text("")
+            editor.display = False
+            blocked_pane.update("")
+            blocked_pane.display = False
         finally:
             self.loading_editor_text = False
 
     def _sync_active_editor_to_buffer(self) -> None:
         if self.active_path is None or self.active_path not in self.buffers:
             return
-        editor = self.query_one("#editor", TextArea)
         buffer = self.buffers[self.active_path]
+        if not buffer.editable:
+            return
+        editor = self.query_one("#editor", TextArea)
         if buffer.text != editor.text:
             buffer.text = editor.text
             buffer.dirty = True
@@ -224,11 +265,13 @@ class NvnoApp(App[None]):
 
     def _save_dirty_buffers(self) -> None:
         for buffer in self.buffers.values():
-            if not buffer.dirty:
+            if not buffer.editable or not buffer.dirty:
                 continue
             self._save_buffer(buffer)
 
     def _save_buffer(self, buffer: Buffer) -> bool:
+        if not buffer.editable:
+            return True
         try:
             atomic_write_text(buffer.path, buffer.text)
         except Exception as exc:

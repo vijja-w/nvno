@@ -10,3 +10,8 @@ class Buffer:
     text: str
     dirty: bool = False
     save_error: str | None = None
+    open_error: str | None = None
+
+    @property
+    def editable(self) -> bool:
+        return self.open_error is None
