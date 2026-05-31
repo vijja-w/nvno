@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from textual.containers import Vertical
 from textual.widgets import Markdown, Static, TextArea
 
+from nvno.__main__ import app_for_path
 from nvno.app import MarkdownPreviewToggle, NvnoApp
 from nvno.file_policy import MAX_EDITOR_FILE_SIZE_BYTES
 from nvno.tabs import CloseTab, FileTab, TabBar
@@ -15,6 +17,43 @@ from nvno.tree import DirectoryRefreshButton, ProjectTree
 
 
 class AppTests(unittest.IsolatedAsyncioTestCase):
+    def test_app_for_file_path_uses_parent_as_project_root(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / ".zshrc"
+            target.write_text("export PATH=$PATH", encoding="utf-8")
+
+            app = app_for_path(str(target))
+
+            self.assertEqual(app.project_root, Path(temp_dir).resolve())
+            self.assertEqual(app.initial_path, target.resolve())
+
+    def test_app_for_directory_path_uses_directory_as_project_root(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            app = app_for_path(temp_dir)
+
+            self.assertEqual(app.project_root, Path(temp_dir).resolve())
+            self.assertIsNone(app.initial_path)
+
+    async def test_initial_path_opens_on_mount(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / ".zshrc"
+            target.write_text("export PATH=$PATH", encoding="utf-8")
+            app = NvnoApp(project_root=Path(temp_dir), initial_path=target)
+
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+
+                self.assertEqual(app.active_path, target.resolve())
+                self.assertEqual(app.open_tabs, [target.resolve()])
+                self.assertEqual(
+                    app.query_one("#editor", TextArea).text,
+                    "export PATH=$PATH",
+                )
+                self.assertEqual(
+                    str(app.query_one("#path-status", Static).content),
+                    ".zshrc",
+                )
+
     async def test_close_active_tab_selects_next_tab(self) -> None:
         app = NvnoApp()
 

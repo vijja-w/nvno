@@ -62,9 +62,14 @@ class NvnoApp(App[None]):
         Binding("meta+w", "close_active_tab", show=False, priority=True),
     ]
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        initial_path: Path | None = None,
+    ) -> None:
         super().__init__()
-        self.project_root = Path.cwd().resolve()
+        self.project_root = (project_root or Path.cwd()).expanduser().resolve()
+        self.initial_path = initial_path.expanduser().resolve() if initial_path else None
         self.buffers: dict[Path, Buffer] = {}
         self.open_tabs: list[Path] = []
         self.active_path: Path | None = None
@@ -101,6 +106,8 @@ class NvnoApp(App[None]):
         self.query_one("#markdown-preview-toggle", MarkdownPreviewToggle).display = False
         self.query_one("#right", Vertical).can_focus = True
         self._refresh_tabs()
+        if self.initial_path is not None:
+            self.open_file(self.initial_path)
         self.file_watch_timer = self.set_interval(0.75, self._reconcile_open_files)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[Path]) -> None:

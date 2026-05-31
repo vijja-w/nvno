@@ -17,6 +17,18 @@ cd ~/code/my-project
 nvno
 ```
 
+Open a specific file with its parent directory as the workspace:
+
+```bash
+nvno ~/.zshrc
+```
+
+Open a specific directory as the workspace:
+
+```bash
+nvno ~/code/my-project
+```
+
 Shortcuts:
 
 - `Esc`: focus/open the file tree; if the tree is already focused, collapse it.
