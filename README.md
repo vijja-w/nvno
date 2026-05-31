@@ -1,4 +1,7 @@
 # nvno
+<p align="center">
+  <img src="assets/nvno_demo.gif" alt="Demo" width="700">
+</p>
 
 `nvno` is a tiny terminal IDE for working inside a project directory.
 
